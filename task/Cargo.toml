@@ -8,3 +8,12 @@ license = "AGPL-3.0-only"
 repository = "https://codeberg.org/alpha-tango-kilo/overseer"
 
 [dependencies]
+delay_timer = "0.11"
+eyre = "0.6"
+tracing = "0.1"
+
+[dependencies.tokio]
+version = "1.18"
+features = [
+    "rt",
+]
