@@ -24,6 +24,7 @@ type Commands = Vec<Arc<TaskCommand>>;
 #[serde(deny_unknown_fields)]
 pub struct CronTask {
     name: String,
+    #[serde(default)]
     dependencies: Vec<()>, // TODO: populate with services
     schedule: String,
     #[serde(default)]
@@ -57,6 +58,7 @@ impl CronTask {
         delay_timer: &DelayTimer,
         id: Arc<AtomicU64>,
     ) -> Result<u64, TaskError> {
+        warn!("Unable to check dependencies as that isn't implemented yet");
         let id = id.fetch_add(1, Ordering::SeqCst);
         let closure = {
             let new_self = self.clone();
@@ -89,6 +91,11 @@ impl CronTask {
                 Err(why)
             }
         }
+    }
+
+    // TODO
+    async fn check_dependencies(self: Arc<Self>) -> bool {
+        unimplemented!("Need to write services first!")
     }
 }
 
