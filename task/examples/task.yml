@@ -1,0 +1,11 @@
+name: Hello world
+dependencies: []
+schedule: "@minutely"
+host: 1.2.3.4
+commands:
+  - name: Install imdb-id
+    env_vars:
+      - RUST_BACKTRACE=full
+    run: cargo install imdb-id
+  - name: Run demonstration script
+    run: demo_script.sh

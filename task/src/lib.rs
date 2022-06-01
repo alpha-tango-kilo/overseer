@@ -1,5 +1,25 @@
-#![cfg_attr(debug_assertions, allow(unused_variables, dead_code))]
-#![cfg_attr(not(debug_assertions), deny(unused_variables, dead_code))]
+//! Asynchronously-handled local or remote tasks for Overseer
+//!
+//! This crate:-
+//! - spawn tasks to be run automatically
+//! - runs tasks automatically (executing in parallel where possible)
+//! - provides a means to read task configuration files from YAML
+//! - uses [`tracing`](https://lib.rs/crates/tracing) to tell you what's going on
+//!
+//! # Structure & terminology
+//!
+//! A **task** is a group of one or more **command**s that run when a
+//! **trigger** occurs
+//!
+//! A **trigger** causes a task to be run, can be time-based ([`CronTask`]) or
+//! file-based (TODO)
+//!
+//! A **command** is an executable (and arguments, if any), or a shell
+//! invocation.
+//! Shell invocations are wrapped in `sh -c "[your-command]"`, meaning the
+//! system default shell is used
+
+#![warn(missing_docs)]
 
 use delay_timer::prelude::*;
 use futures::future;
@@ -9,7 +29,6 @@ use serde::{Deserialize, Deserializer};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::task::JoinError;
@@ -20,19 +39,35 @@ pub use error::*;
 
 type Commands = Vec<Arc<TaskCommand>>;
 
+/// A task that is run on a time-periodic basis
+///
+/// Uses a cron schedule to determine when it's run.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CronTask {
     name: String,
+    #[allow(dead_code)]
     #[serde(default)]
     dependencies: Vec<()>, // TODO: populate with services
     schedule: String,
+    #[allow(dead_code)]
     #[serde(default)]
     host: Host,
     commands: Commands,
 }
 
 impl CronTask {
+    /// Loads a task from file, asynchronously
+    ///
+    /// Cron strings accepted by [`cron_clock`](https://docs.rs/cron_clock) are
+    /// supported, including shortcut expressions
+    ///
+    /// Environment variables should be specified as KEY=value
+    ///
+    /// Example task file:
+    /// ```yml
+    #[doc = include_str!("../examples/task.yml")]
+    /// ```
     pub async fn load_from(path: impl AsRef<Path>) -> Result<Self, ReadError> {
         // Could consider tokio_uring for the 'proper' way to do this
         let bytes =
@@ -53,13 +88,20 @@ impl CronTask {
         Ok(cron_task)
     }
 
-    pub fn spawn(
+    /// Schedules the task using the given `delay_timer`
+    ///
+    /// The `id` given must be unique for the `delay_timer` or else the task
+    /// with the same ID will be overwritten.
+    /// This is considered the responsibility of the caller
+    ///
+    /// Note: this does not run the task
+    // TODO: check ID isn't in use and error if so
+    pub fn activate(
         self: Arc<Self>,
         delay_timer: &DelayTimer,
-        id: Arc<AtomicU64>,
+        id: u64,
     ) -> Result<u64, TaskError> {
         warn!("Unable to check dependencies as that isn't implemented yet");
-        let id = id.fetch_add(1, Ordering::SeqCst);
         let closure = {
             let new_self = self.clone();
             move || CronTask::run(new_self.clone(), id)
@@ -74,8 +116,19 @@ impl CronTask {
         Ok(id)
     }
 
-    async fn run(self: Arc<Self>, id: u64) -> Result<(), JoinError> {
+    /// Manually runs the task
+    ///
+    /// This is what's called automatically when a task is activated
+    ///
+    /// Each command is run in a separate green thread.
+    /// If all commands complete successfully, `Ok` will be returned, otherwise
+    /// the first error will be
+    // Do other commands continue if one fails? I presume so, just this can't
+    // be relied upon as they're no longer being awaited
+    // TODO: remove id from method signature, store in CronTask instead
+    pub async fn run(self: Arc<Self>, id: u64) -> Result<(), JoinError> {
         info!(%id, %self.name, "Task triggered");
+        // TODO: handle remote hosts
         let handle_iter = self
             .commands
             .iter()
@@ -94,6 +147,7 @@ impl CronTask {
     }
 
     // TODO
+    #[allow(dead_code)]
     async fn check_dependencies(self: Arc<Self>) -> bool {
         unimplemented!("Need to write services first!")
     }

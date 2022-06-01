@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Errors that occur while reading or parsing a task YAML file
+///
+/// See [`CronTask::load_from`](crate::CronTask::load_from) for guidance on correct formatting
 #[derive(Debug, Error)]
 #[error("failed to read {}: {r#type}", .path.to_string_lossy())]
 pub struct ReadError {
@@ -10,11 +13,14 @@ pub struct ReadError {
 
 #[derive(Debug, Error)]
 #[error(transparent)]
-pub enum ReadErrorType {
+pub(crate) enum ReadErrorType {
     Io(#[from] std::io::Error),
     De(#[from] serde_yaml::Error),
 }
 
+/// Errors that occur when attempting to execute a command
+///
+/// Returned by [`CronTask::run`](crate::CronTask::run)
 #[derive(Debug, Error)]
 #[error("{name} failed: {r#type}")]
 pub struct CommandRunError {
@@ -23,7 +29,7 @@ pub struct CommandRunError {
 }
 
 #[derive(Debug, Error)]
-pub enum CommandRunErrorType {
+pub(crate) enum CommandRunErrorType {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("command completed with non-zero status {0}")]
