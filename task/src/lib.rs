@@ -140,31 +140,47 @@ impl TaskCommand {
 }
 
 #[derive(Debug)]
-enum MyCommand {
-    BashInvocation(Command),
-    Path(PathBuf),
+struct MyCommand {
+    program: String,
+    args: Vec<String>,
+}
+
+impl MyCommand {
+    fn build(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+        cmd
+    }
 }
 
 impl<'de> Deserialize<'de> for MyCommand {
     fn deserialize<D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        let path = Path::new(&s);
-        if path.exists() && path.is_executable() {
-            trace!("Assuming {s:?} is a path");
-            Ok(MyCommand::Path(PathBuf::from(s)))
-        } else {
-            trace!("Assuming {s:?} is a bash invocation");
-            let command = match s.split_once(' ') {
-                Some((program, args)) => {
-                    let mut cmd = Command::new(program);
-                    cmd.args(args.split(' '));
-                    cmd
-                }
-                None => Command::new(s),
+        let input = String::deserialize(deserializer)?;
+        let path = Path::new(&input);
+        let command = if path.exists() && path.is_executable() {
+            trace!("Assuming {input:?} is a path");
+            let command = match input.split_once(' ') {
+                Some((program, args)) => MyCommand {
+                    program: program.to_owned(),
+                    args: args.split(' ').map(ToOwned::to_owned).collect(),
+                },
+                None => MyCommand {
+                    program: input,
+                    args: vec![],
+                },
             };
-            Ok(MyCommand::BashInvocation(command))
-        }
+            command
+        } else {
+            trace!("Assuming {input:?} is a bash invocation");
+            MyCommand {
+                // Consider making this less platform specific
+                // (will someone PLEASE think of the Windows users?!)
+                program: String::from("sh"),
+                args: vec![format!("{input:?}")],
+            }
+        };
+        Ok(command)
     }
 }
