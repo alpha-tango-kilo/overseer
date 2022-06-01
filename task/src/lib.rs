@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::task::JoinError;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 mod error;
 pub use error::*;
@@ -126,8 +126,7 @@ struct TaskCommand {
     name: String,
     #[serde(default)]
     working_dir: PathBuf,
-    // TODO: improve deserialisation experience
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_env_vars")]
     env_vars: Vec<(String, String)>,
     #[serde(rename = "run")]
     inner: MyCommand,
@@ -175,6 +174,32 @@ impl TaskCommand {
             }
         }
     }
+}
+
+fn de_env_vars<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<(String, String)>, D::Error> {
+    let input = Vec::<String>::deserialize(d)?;
+    let mut output = Vec::with_capacity(input.len());
+    for line in input.into_iter() {
+        match line.split_once('=') {
+            Some((key, val)) => {
+                if key.chars().any(|c| c.is_ascii_lowercase()) {
+                    warn!(%key, "Lowercase environment variable");
+                }
+                output.push((
+                    key.trim_end().to_owned(),
+                    val.trim_start().to_owned(),
+                ));
+            }
+            None => {
+                return Err(D::Error::custom(
+                    "incorrect environment variable syntax: no = in line",
+                ))
+            }
+        }
+    }
+    Ok(output)
 }
 
 #[derive(Debug)]
