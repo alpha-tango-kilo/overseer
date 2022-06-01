@@ -30,6 +30,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::process::Command;
 use tokio::task::JoinError;
 use tracing::{error, info, trace, warn};
@@ -46,6 +47,8 @@ type Commands = Vec<Arc<TaskCommand>>;
 #[serde(deny_unknown_fields)]
 pub struct CronTask {
     name: String,
+    #[serde(default)]
+    id: AtomicU64,
     #[allow(dead_code)]
     #[serde(default)]
     dependencies: Vec<()>, // TODO: populate with services
@@ -93,18 +96,21 @@ impl CronTask {
     /// The `id` given must be unique for the `delay_timer` or else the task
     /// with the same ID will be overwritten.
     /// This is considered the responsibility of the caller
+    /// [for now](https://github.com/BinChengZhao/delay-timer/issues/41)
     ///
     /// Note: this does not run the task
     // TODO: check ID isn't in use and error if so
+    //       https://github.com/BinChengZhao/delay-timer/issues/41
     pub fn activate(
         self: Arc<Self>,
         delay_timer: &DelayTimer,
         id: u64,
     ) -> Result<u64, TaskError> {
         warn!("Unable to check dependencies as that isn't implemented yet");
+        self.id.store(id, Ordering::SeqCst);
         let closure = {
             let new_self = self.clone();
-            move || CronTask::run(new_self.clone(), id)
+            move || CronTask::run(new_self.clone())
         };
         let task = TaskBuilder::default()
             .set_task_id(id)
@@ -125,9 +131,8 @@ impl CronTask {
     /// the first error will be
     // Do other commands continue if one fails? I presume so, just this can't
     // be relied upon as they're no longer being awaited
-    // TODO: remove id from method signature, store in CronTask instead
-    pub async fn run(self: Arc<Self>, id: u64) -> Result<(), JoinError> {
-        info!(%id, %self.name, "Task triggered");
+    pub async fn run(self: Arc<Self>) -> Result<(), JoinError> {
+        info!(?self.id, %self.name, "Task triggered");
         // TODO: handle remote hosts
         let handle_iter = self
             .commands
@@ -136,11 +141,11 @@ impl CronTask {
             .map(|cmd| tokio::spawn(cmd.run()));
         match future::try_join_all(handle_iter).await {
             Ok(results) => {
-                info!(%id, %self.name, "Task completed successfully: {results:?}");
+                info!(?self.id, %self.name, "Task completed successfully: {results:?}");
                 Ok(())
             }
             Err(why) => {
-                error!(%id, %self.name, "Task failed: {why}");
+                error!(?self.id, %self.name, "Task failed: {why}");
                 Err(why)
             }
         }
@@ -194,6 +199,7 @@ struct TaskCommand {
 }
 
 impl TaskCommand {
+    // could include Task ID here for better logging
     async fn run(self: Arc<Self>) -> Result<(), CommandRunError> {
         info!(%self.name, "TaskCommand triggered");
         let mut command = self.inner.build();
