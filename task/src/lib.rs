@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), deny(unused_variables, dead_code))]
 
 use delay_timer::prelude::*;
+use futures::future;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -10,13 +11,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::task::JoinHandle;
-use tracing::info;
+use tokio::task::JoinError;
+use tracing::{error, info};
 
 mod error;
 pub use error::*;
 
-type Commands = Arc<Vec<TaskCommand>>;
+type Commands = Vec<Arc<TaskCommand>>;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,10 +71,23 @@ impl CronTask {
         Ok(id)
     }
 
-    async fn run(self: Arc<Self>, id: u64) -> eyre::Result<()> {
+    async fn run(self: Arc<Self>, id: u64) -> Result<(), JoinError> {
         info!(%id, %self.name, "Task triggered");
-        todo!("Run all the commands")
-        // This will be a whole bunch of tokio::spawn, try_join!ed together
+        let handle_iter = self
+            .commands
+            .iter()
+            .cloned()
+            .map(|cmd| tokio::spawn(cmd.run()));
+        match future::try_join_all(handle_iter).await {
+            Ok(results) => {
+                info!(%id, %self.name, "Task completed successfully: {results:?}");
+                Ok(())
+            }
+            Err(why) => {
+                error!(%id, %self.name, "Task failed: {why}");
+                Err(why)
+            }
+        }
     }
 }
 
@@ -115,7 +129,7 @@ struct TaskCommand {
 }
 
 impl TaskCommand {
-    async fn run(&self) -> JoinHandle<()> {
+    async fn run(self: Arc<Self>) -> eyre::Result<()> {
         todo!()
     }
 }

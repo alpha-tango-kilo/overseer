@@ -791,6 +791,7 @@ version = "0.1.0"
 dependencies = [
  "delay_timer",
  "eyre",
+ "futures",
  "serde",
  "serde_yaml",
  "thiserror",
