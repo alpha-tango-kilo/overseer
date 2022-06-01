@@ -1,7 +1,7 @@
 #![cfg_attr(debug_assertions, allow(unused_variables, dead_code))]
 #![cfg_attr(not(debug_assertions), deny(unused_variables, dead_code))]
 
-use delay_timer::prelude::{DelayTimer, TaskBuilder};
+use delay_timer::prelude::*;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ pub struct CronTask {
 
 impl CronTask {
     pub async fn load_from(path: impl AsRef<Path>) -> Result<Self, ReadError> {
-        // TODO: don't read it all at once? Streams or whatever
+        // Could consider tokio_uring for the 'proper' way to do this
         let bytes =
             tokio::fs::read(path.as_ref())
                 .await
@@ -50,17 +50,15 @@ impl CronTask {
         Ok(cron_task)
     }
 
-    // TODO: replace with better Result type
     pub fn spawn(
-        &self,
+        self: Arc<Self>,
         delay_timer: &DelayTimer,
         id: Arc<AtomicU64>,
-    ) -> eyre::Result<u64> {
+    ) -> Result<u64, TaskError> {
         let id = id.fetch_add(1, Ordering::SeqCst);
         let closure = {
-            let host = self.host;
-            let commands = self.commands.clone();
-            move || CronTask::run(host, commands.clone())
+            let new_self = self.clone();
+            move || CronTask::run(new_self.clone(), id)
         };
         let task = TaskBuilder::default()
             .set_task_id(id)
@@ -72,8 +70,8 @@ impl CronTask {
         Ok(id)
     }
 
-    async fn run(host: Host, commands: Commands) -> eyre::Result<()> {
-        info!("Task triggered");
+    async fn run(self: Arc<Self>, id: u64) -> eyre::Result<()> {
+        info!(%id, %self.name, "Task triggered");
         todo!("Run all the commands")
         // This will be a whole bunch of tokio::spawn, try_join!ed together
     }
