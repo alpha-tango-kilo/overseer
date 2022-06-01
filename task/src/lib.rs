@@ -6,7 +6,6 @@ use futures::future;
 use is_executable::IsExecutable;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -127,15 +126,54 @@ struct TaskCommand {
     name: String,
     #[serde(default)]
     working_dir: PathBuf,
+    // TODO: improve deserialisation experience
     #[serde(default)]
-    env_vars: HashMap<String, String>,
+    env_vars: Vec<(String, String)>,
     #[serde(rename = "run")]
-    execute: MyCommand,
+    inner: MyCommand,
 }
 
 impl TaskCommand {
-    async fn run(self: Arc<Self>) -> eyre::Result<()> {
-        todo!()
+    async fn run(self: Arc<Self>) -> Result<(), CommandRunError> {
+        info!(%self.name, "TaskCommand triggered");
+        let mut command = self.inner.build();
+        command
+            .current_dir(&self.working_dir)
+            .envs(self.env_vars.clone());
+        // This is ugly but without making an async closure I can't use
+        // and_then
+        let exit = match command.spawn() {
+            // Could get command output by changing to wait_with_output
+            Ok(mut child) => match child.wait().await {
+                Ok(exit) => exit,
+                Err(why) => {
+                    return Err(CommandRunError {
+                        name: self.name.clone(),
+                        r#type: CommandRunErrorType::Io(why),
+                    })
+                }
+            },
+            Err(why) => {
+                return Err(CommandRunError {
+                    name: self.name.clone(),
+                    r#type: CommandRunErrorType::Io(why),
+                })
+            }
+        };
+        match exit.success() {
+            true => {
+                info!(%self.name, "TaskCommand completed successfully");
+                Ok(())
+            }
+            false => {
+                let exit_code = exit.code().expect("No exit code");
+                error!(%self.name, "TaskCommand failed with exit code {exit_code}");
+                Err(CommandRunError {
+                    name: self.name.clone(),
+                    r#type: CommandRunErrorType::ExitStatus(exit_code),
+                })
+            }
+        }
     }
 }
 
