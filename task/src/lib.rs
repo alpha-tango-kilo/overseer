@@ -6,13 +6,17 @@ use futures::future;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use is_executable::IsExecutable;
+use os_str_bytes::{RawOsStr, RawOsString};
+use tokio::process::Command;
 use tokio::task::JoinError;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 mod error;
 pub use error::*;
@@ -125,11 +129,42 @@ struct TaskCommand {
     name: String,
     working_dir: PathBuf,
     env_vars: HashMap<String, String>,
-    execute: (), // TODO: decide on format for this
+    execute: MyCommand,
 }
 
 impl TaskCommand {
     async fn run(self: Arc<Self>) -> eyre::Result<()> {
         todo!()
+    }
+}
+
+#[derive(Debug)]
+enum MyCommand {
+    BashInvocation(Command),
+    Path(PathBuf),
+}
+
+impl<'de> Deserialize<'de> for MyCommand {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = OsString::deserialize(deserializer)?;
+        let path = Path::new(&s);
+        if path.exists() && path.is_executable() {
+            trace!("Assuming {s:?} is a path");
+            Ok(MyCommand::Path(PathBuf::from(s)))
+        } else {
+            trace!("Assuming {s:?} is a bash invocation");
+            let ros = RawOsString::new(s);
+            let command = match ros.split_once(' ') {
+                Some((program, args)) => {
+                    let mut cmd = Command::new(program.to_os_str());
+                    cmd.args(args.split(' ').map(RawOsStr::to_os_str));
+                    cmd
+                }
+                None => {
+                    Command::new(ros.to_os_str())
+                }
+            };
+            Ok(MyCommand::BashInvocation(command))
+        }
     }
 }
