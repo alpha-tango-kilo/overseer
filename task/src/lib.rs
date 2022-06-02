@@ -21,14 +21,16 @@
 
 #![warn(missing_docs)]
 
+use async_trait::async_trait;
 use is_executable::IsExecutable;
-use serde::de::Error;
+use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::process::Command;
+use tokio::task::JoinError;
 use tracing::{error, info, trace, warn};
 
 mod cron;
@@ -41,7 +43,43 @@ pub use file::*;
 
 /// Contains error types relating to tasks and commands
 pub mod error;
-use crate::error::{CommandRunError, CommandRunErrorType};
+use crate::error::*;
+
+pub(crate) type Commands = Vec<Arc<TaskCommand>>;
+
+/// Defines required functionality of a **task**
+#[async_trait]
+pub trait Task {
+    /// Manually runs the task
+    ///
+    /// This is what's called automatically when a task is activated
+    ///
+    /// Each command is run in a separate green thread.
+    /// If all commands complete successfully, `Ok` will be returned, otherwise
+    /// the first error will be
+    async fn run(self: Arc<Self>) -> Result<(), JoinError>;
+}
+
+pub(crate) async fn load_from<T, P>(path: P) -> Result<T, ReadError>
+where
+    T: Task + DeserializeOwned,
+    P: AsRef<Path> + Send + Sync + 'static,
+{
+    // Could consider tokio_uring for the 'proper' way to do this
+    let bytes =
+        tokio::fs::read(path.as_ref())
+            .await
+            .map_err(|e| ReadError {
+                path: path.as_ref().to_owned(),
+                r#type: ReadErrorType::Io(e),
+            })?;
+    let task = serde_yaml::from_slice::<T>(&bytes).map_err(|e| ReadError {
+        path: path.as_ref().to_owned(),
+        r#type: ReadErrorType::De(e),
+    })?;
+    info!("Loaded task from file");
+    Ok(task)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "snake_case", deny_unknown_fields)]

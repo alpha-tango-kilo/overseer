@@ -798,6 +798,7 @@ dependencies = [
 name = "task"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "delay_timer",
  "eyre",
  "futures",
