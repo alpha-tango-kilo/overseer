@@ -12,7 +12,7 @@
 //! **trigger** occurs
 //!
 //! A **trigger** causes a task to be run, can be time-based ([`CronTask`]) or
-//! file-based (TODO)
+//! file-based ([`FileEventTask`])
 //!
 //! A **command** is an executable (and arguments, if any), or a shell
 //! invocation.
@@ -50,6 +50,10 @@ pub(crate) type Commands = Vec<Arc<TaskCommand>>;
 /// Defines required functionality of a **task**
 #[async_trait]
 pub trait Task {
+    /// Checks that all the dependent services of a task are alive and well
+    ///
+    /// Expected to be checked before activating a task
+    async fn check_dependencies(self: Arc<Self>) -> bool;
     /// Manually runs the task
     ///
     /// This is what's called automatically when a task is activated

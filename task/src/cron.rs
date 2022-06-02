@@ -58,6 +58,7 @@ impl CronTask {
     /// Note: this does not run the task
     // TODO: check ID isn't in use and error if so
     //       https://github.com/BinChengZhao/delay-timer/issues/41
+    // TODO: does this need to be Arc<Self>
     pub fn activate(
         self: Arc<Self>,
         delay_timer: &DelayTimer,
@@ -78,16 +79,14 @@ impl CronTask {
         info!(%id, %self.name, "Scheduled task started");
         Ok(id)
     }
-
-    // TODO
-    #[allow(dead_code)]
-    async fn check_dependencies(self: Arc<Self>) -> bool {
-        unimplemented!("Need to write services first!")
-    }
 }
 
 #[async_trait]
 impl Task for CronTask {
+    // TODO
+    async fn check_dependencies(self: Arc<Self>) -> bool {
+        unimplemented!("Need to write services first!")
+    }
     // Do other commands continue if one fails? I presume so, just this can't
     // be relied upon as they're no longer being awaited
     async fn run(self: Arc<Self>) -> Result<(), JoinError> {
