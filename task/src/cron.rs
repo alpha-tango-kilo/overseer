@@ -44,7 +44,7 @@ impl CronTask {
     #[inline(always)]
     pub async fn load_from<P>(path: P) -> Result<Self, ReadError>
     where
-        P: AsRef<Path> + Send + Sync + 'static,
+        P: AsRef<Path> + Send + Sync,
     {
         crate::load_from(path).await
     }

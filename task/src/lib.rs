@@ -64,10 +64,9 @@ pub trait Task {
     async fn run(self: Arc<Self>) -> Result<(), JoinError>;
 }
 
-pub(crate) async fn load_from<T, P>(path: P) -> Result<T, ReadError>
+pub(crate) async fn load_from<T>(path: impl AsRef<Path>) -> Result<T, ReadError>
 where
     T: Task + DeserializeOwned,
-    P: AsRef<Path> + Send + Sync + 'static,
 {
     // Could consider tokio_uring for the 'proper' way to do this
     let bytes =
