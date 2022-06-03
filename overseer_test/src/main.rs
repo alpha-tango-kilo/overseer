@@ -20,8 +20,7 @@ async fn main() -> color_eyre::Result<()> {
     eprintln!("{file_task:#?}");
     let file_task = Arc::new(file_task);
     info!("Activating");
-    file_task.clone().activate().await?.await?;
+    file_task.activate().await?.await?;
     info!("Job done");
-    std::mem::drop(file_task);
     Ok(())
 }

@@ -43,7 +43,7 @@ impl FileEventTask {
     /// While active, if a file/folder being watched is created, modified, or
     /// deleted, the task is run (see [`FileEventTask::run`])
     pub async fn activate(
-        self: Arc<Self>,
+        self: &Arc<Self>,
     ) -> Result<JoinHandle<()>, notify::Error> {
         warn!("Unable to check dependencies as that isn't implemented yet");
         let (tx, rx) = mpsc::channel::<Event>(1);
@@ -73,7 +73,7 @@ impl FileEventTask {
         info!(%self.name, "Created new Watcher for task");
 
         let handler = EventHandler {
-            parent: Arc::downgrade(&self),
+            parent: Arc::downgrade(self),
             rx,
             _watcher: watcher,
         };

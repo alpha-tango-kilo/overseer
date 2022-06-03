@@ -58,9 +58,8 @@ impl CronTask {
     /// Note: this does not run the task
     // TODO: check ID isn't in use and error if so
     //       https://github.com/BinChengZhao/delay-timer/issues/41
-    // TODO: does this need to be Arc<Self>
     pub fn activate(
-        self: Arc<Self>,
+        self: &Arc<Self>,
         delay_timer: &DelayTimer,
         id: u64,
     ) -> Result<u64, TaskError> {
