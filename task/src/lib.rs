@@ -97,7 +97,6 @@ struct TaskCommand {
 }
 
 impl TaskCommand {
-    // could include Task ID here for better logging
     async fn run(self: Arc<Self>) -> Result<(), CommandRunError> {
         info!(%self.name, "TaskCommand triggered");
         let mut command = self.inner.build();
@@ -206,7 +205,7 @@ impl<'de> Deserialize<'de> for MyCommand {
                 // Consider making this less platform specific
                 // (will someone PLEASE think of the Windows users?!)
                 program: String::from("sh"),
-                args: vec![format!("{input:?}")],
+                args: vec![String::from("-c"), format!("{input:?}")],
             }
         };
         Ok(command)

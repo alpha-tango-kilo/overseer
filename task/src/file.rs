@@ -104,11 +104,14 @@ impl EventHandler {
         loop {
             match self.rx.recv().await {
                 Some(_) => match self.parent.upgrade() {
-                    Some(parent) => {
-                        if let Err(why) = parent.clone().run().await {
-                            error!(%parent.name, "Task failed with error: {why}");
+                    Some(parent) => match parent.clone().run().await {
+                        Ok(()) => {
+                            info!(%parent.name, "Task completed successfully")
                         }
-                    }
+                        Err(why) => {
+                            error!(%parent.name, "Task failed with error: {why}")
+                        }
+                    },
                     None => {
                         info!("EventHandler shutdown because its FileEventTask was dropped");
                         return;
