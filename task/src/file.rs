@@ -1,12 +1,15 @@
-use crate::{Commands, Host, ReadError, Task};
+use crate::{
+    CommandRunError, CommandRunErrorType, Commands, Host, ReadError, Task,
+};
 use async_trait::async_trait;
+use futures::future;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::{error, info, trace, warn};
 
 /// A task that runs based on filesystem activity
@@ -47,6 +50,7 @@ impl FileEventTask {
     ) -> Result<JoinHandle<()>, notify::Error> {
         warn!("Unable to check dependencies as that isn't implemented yet");
         let (tx, rx) = mpsc::channel::<Event>(1);
+        // TODO: debounce events
         let mut watcher =
             RecommendedWatcher::new(move |er: notify::Result<Event>| {
                 use notify::EventKind::*;
@@ -54,12 +58,12 @@ impl FileEventTask {
                 match er {
                     Ok(event) => match event.kind {
                         Create(_) | Modify(_) | Remove(_) => {
-                            trace!(?event, "Sending event");
+                            trace!("Sending event");
                             tx.blocking_send(event)
                                 .expect("failed to send notify::Event");
                         }
                         _ => {
-                            trace!(?event, "Didn't send event");
+                            trace!("Didn't send event");
                         }
                     },
                     Err(why) => warn!("Watcher error event: {why}"),
@@ -88,8 +92,35 @@ impl Task for FileEventTask {
         unimplemented!("Need to write services first!")
     }
 
-    async fn run(self: Arc<Self>) -> Result<(), JoinError> {
-        todo!()
+    async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>> {
+        info!(%self.name, "Task triggered");
+        // TODO: handle remote hosts
+        let handle_iter = self
+            .commands
+            .iter()
+            .cloned()
+            .map(|cmd| tokio::spawn(cmd.run()));
+
+        let results = future::join_all(handle_iter).await;
+        trace!(%self.name, "Processing task command results");
+        let errors = results
+            .into_iter()
+            .filter_map(|nested_result| match nested_result {
+                Ok(Ok(())) => None,
+                Ok(Err(cre)) => Some(cre),
+                Err(join_err) => Some(CommandRunError {
+                    name: self.name.clone(),
+                    r#type: CommandRunErrorType::Async(join_err),
+                }),
+            })
+            .collect::<Vec<CommandRunError>>();
+        if errors.is_empty() {
+            info!(%self.name, "Task completed successfully");
+            Ok(())
+        } else {
+            error!(%self.name, "Task completed with errors");
+            Err(errors)
+        }
     }
 }
 
@@ -109,7 +140,7 @@ impl EventHandler {
                             info!(%parent.name, "Task completed successfully")
                         }
                         Err(why) => {
-                            error!(%parent.name, "Task failed with error: {why}")
+                            why.into_iter().for_each(|err| error!("{err}"));
                         }
                     },
                     None => {

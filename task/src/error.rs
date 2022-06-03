@@ -30,7 +30,9 @@ pub struct CommandRunError {
 
 #[derive(Debug, Error)]
 pub(crate) enum CommandRunErrorType {
-    #[error("io error: {0}")]
+    #[error("future panicked: {0}")]
+    Async(#[from] tokio::task::JoinError),
+    #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("command completed with non-zero status {0}")]
     ExitStatus(i32),

@@ -5,10 +5,11 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::task::JoinError;
-use tracing::{error, info, warn};
+use tracing::{info, trace, warn};
 
-use crate::{Commands, Host, ReadError, Task};
+use crate::{
+    CommandRunError, CommandRunErrorType, Commands, Host, ReadError, Task,
+};
 
 /// A task that is run on a time-periodic basis
 ///
@@ -86,9 +87,8 @@ impl Task for CronTask {
     async fn check_dependencies(self: Arc<Self>) -> bool {
         unimplemented!("Need to write services first!")
     }
-    // Do other commands continue if one fails? I presume so, just this can't
-    // be relied upon as they're no longer being awaited
-    async fn run(self: Arc<Self>) -> Result<(), JoinError> {
+
+    async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>> {
         info!(?self.id, %self.name, "Task triggered");
         // TODO: handle remote hosts
         let handle_iter = self
@@ -96,15 +96,26 @@ impl Task for CronTask {
             .iter()
             .cloned()
             .map(|cmd| tokio::spawn(cmd.run()));
-        match future::try_join_all(handle_iter).await {
-            Ok(results) => {
-                info!(?self.id, %self.name, "Task completed successfully: {results:?}");
-                Ok(())
-            }
-            Err(why) => {
-                error!(?self.id, %self.name, "Task failed: {why}");
-                Err(why)
-            }
+
+        let results = future::join_all(handle_iter).await;
+        trace!(?self.id, %self.name, "Processing task command results");
+        let errors = results
+            .into_iter()
+            .filter_map(|nested_result| match nested_result {
+                Ok(Ok(())) => None,
+                Ok(Err(cre)) => Some(cre),
+                Err(join_err) => Some(CommandRunError {
+                    name: self.name.clone(),
+                    r#type: CommandRunErrorType::Async(join_err),
+                }),
+            })
+            .collect::<Vec<CommandRunError>>();
+        if errors.is_empty() {
+            info!(%self.name, "Task completed successfully");
+            Ok(())
+        } else {
+            warn!(%self.name, "Task completed with errors");
+            Err(errors)
         }
     }
 }

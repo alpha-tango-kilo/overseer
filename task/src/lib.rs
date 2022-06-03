@@ -30,7 +30,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::process::Command;
-use tokio::task::JoinError;
 use tracing::{error, info, trace, warn};
 
 mod cron;
@@ -61,7 +60,7 @@ pub trait Task {
     /// Each command is run in a separate green thread.
     /// If all commands complete successfully, `Ok` will be returned, otherwise
     /// the first error will be
-    async fn run(self: Arc<Self>) -> Result<(), JoinError>;
+    async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>>;
 }
 
 pub(crate) async fn load_from<T>(path: impl AsRef<Path>) -> Result<T, ReadError>
