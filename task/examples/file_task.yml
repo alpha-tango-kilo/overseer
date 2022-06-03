@@ -1,0 +1,7 @@
+name: Everything is a file
+host: local
+paths:
+  - demo_script.sh
+commands:
+  - name: Confirm it works
+    run: demo_script.sh
