@@ -6,7 +6,7 @@ use futures::future;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -46,21 +46,29 @@ impl FileEventTask {
     ///
     /// While active, if a file/folder being watched is created, modified, or
     /// deleted, the task is run (see [`FileEventTask::run`])
+    ///
+    /// Errors only if the watcher couldn't be created.
+    /// Other errors that derive from paths not being watchable are only
+    /// logged.
+    /// There is no check to ensure any paths are successfully watched
     pub async fn activate(
         self: &Arc<Self>,
     ) -> Result<JoinHandle<()>, notify::Error> {
         warn!("Unable to check dependencies as that isn't implemented yet");
         let (tx, rx) = mpsc::channel::<Event>(1);
-        let mut watcher = RecommendedWatcher::new(NotifyHandler::new(tx))?;
-        self.watch_paths.iter().try_for_each(|path| {
+
+        let mut watcher = RecommendedWatcher::new(PreEventHandler::new(tx))?;
+        self.watch_paths.iter().for_each(|path| {
             // TODO: expose RecursiveMode to config files
             // https://docs.rs/notify/latest/5.0.0-pre.15/enum.RecursiveMode.html
-            watcher.watch(path, RecursiveMode::NonRecursive)
-        })?;
-        info!(%self.name, "Created new Watcher for task");
+            if let Err(why) = watcher.watch(path, RecursiveMode::NonRecursive) {
+                error!("Couldn't watch {}: {}", path.to_string_lossy(), why);
+            }
+        });
+        info!(%self.name, "Created watcher");
 
-        let handler = EventHandler {
-            parent: Arc::downgrade(self),
+        let handler = PostEventHandler {
+            parent: self.clone(),
             rx,
             _watcher: watcher,
         };
@@ -108,16 +116,16 @@ impl Task for FileEventTask {
 }
 
 #[derive(Debug)]
-struct NotifyHandler {
-    inner: Option<NotifyHandlerInner>,
+struct PreEventHandler {
+    inner: Option<PreEventHandlerInner>,
     channel: Sender<Event>,
 }
 
-impl NotifyHandler {
+impl PreEventHandler {
     const DEBOUNCE: Duration = Duration::from_millis(500);
 
     fn new(tx: Sender<Event>) -> Self {
-        NotifyHandler {
+        PreEventHandler {
             inner: None,
             channel: tx,
         }
@@ -140,17 +148,17 @@ impl NotifyHandler {
     }
 
     fn remember(&mut self, event: Event) {
-        let new_inner = NotifyHandlerInner::from(event);
+        let new_inner = PreEventHandlerInner::from(event);
         self.inner = Some(new_inner);
     }
 }
 
-impl notify::EventHandler for NotifyHandler {
+impl notify::EventHandler for PreEventHandler {
     fn handle_event(&mut self, event_result: Result<Event, notify::Error>) {
         match event_result {
             Ok(event) => {
                 trace!(?event, "Notify event");
-                if NotifyHandler::relevant(&event) {
+                if PreEventHandler::relevant(&event) {
                     if !self.debouncing(&event) {
                         // Event must be cloned here so it can be remembered
                         // later
@@ -174,42 +182,36 @@ impl notify::EventHandler for NotifyHandler {
 }
 
 #[derive(Debug)]
-struct NotifyHandlerInner {
+struct PreEventHandlerInner {
     prev_time: Instant,
     prev_event: Event,
 }
 
-impl From<Event> for NotifyHandlerInner {
+impl From<Event> for PreEventHandlerInner {
     fn from(event: Event) -> Self {
-        NotifyHandlerInner {
+        PreEventHandlerInner {
             prev_time: Instant::now(),
             prev_event: event,
         }
     }
 }
 
-struct EventHandler {
-    parent: Weak<FileEventTask>,
+struct PostEventHandler<W: Watcher> {
+    parent: Arc<FileEventTask>,
     rx: Receiver<Event>,
-    _watcher: RecommendedWatcher,
+    _watcher: W,
 }
 
-impl EventHandler {
+impl<W: Watcher> PostEventHandler<W> {
     async fn monitor(mut self) {
         loop {
             match self.rx.recv().await {
-                Some(_) => match self.parent.upgrade() {
-                    Some(parent) => match parent.clone().run().await {
-                        Ok(()) => {
-                            info!(%parent.name, "Task completed successfully")
-                        }
-                        Err(why) => {
-                            why.into_iter().for_each(|err| error!("{err}"));
-                        }
-                    },
-                    None => {
-                        info!("EventHandler shutdown because its FileEventTask was dropped");
-                        return;
+                Some(_) => match self.parent.clone().run().await {
+                    Ok(()) => {
+                        info!(%self.parent.name, "Task completed successfully")
+                    }
+                    Err(why) => {
+                        why.into_iter().for_each(|err| error!("{err}"));
                     }
                 },
                 None => {
