@@ -7,8 +7,9 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::{error, info, trace, warn};
 
@@ -50,25 +51,7 @@ impl FileEventTask {
     ) -> Result<JoinHandle<()>, notify::Error> {
         warn!("Unable to check dependencies as that isn't implemented yet");
         let (tx, rx) = mpsc::channel::<Event>(1);
-        // TODO: debounce events
-        let mut watcher =
-            RecommendedWatcher::new(move |er: notify::Result<Event>| {
-                use notify::EventKind::*;
-                trace!(?er, "Watcher event triggered");
-                match er {
-                    Ok(event) => match event.kind {
-                        Create(_) | Modify(_) | Remove(_) => {
-                            trace!("Sending event");
-                            tx.blocking_send(event)
-                                .expect("failed to send notify::Event");
-                        }
-                        _ => {
-                            trace!("Didn't send event");
-                        }
-                    },
-                    Err(why) => warn!("Watcher error event: {why}"),
-                }
-            })?;
+        let mut watcher = RecommendedWatcher::new(NotifyHandler::new(tx))?;
         self.watch_paths.iter().try_for_each(|path| {
             // TODO: expose RecursiveMode to config files
             // https://docs.rs/notify/latest/5.0.0-pre.15/enum.RecursiveMode.html
@@ -120,6 +103,87 @@ impl Task for FileEventTask {
         } else {
             error!(%self.name, "Task completed with errors");
             Err(errors)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NotifyHandler {
+    inner: Option<NotifyHandlerInner>,
+    channel: Sender<Event>,
+}
+
+impl NotifyHandler {
+    const DEBOUNCE: Duration = Duration::from_millis(500);
+
+    fn new(tx: Sender<Event>) -> Self {
+        NotifyHandler {
+            inner: None,
+            channel: tx,
+        }
+    }
+
+    fn relevant(event: &Event) -> bool {
+        use notify::EventKind::*;
+        matches!(event.kind, Create(_) | Modify(_) | Remove(_))
+    }
+
+    fn debouncing(&self, event: &Event) -> bool {
+        match &self.inner {
+            Some(inner) => {
+                let now = Instant::now();
+                let elapsed = now.duration_since(inner.prev_time);
+                &inner.prev_event == event && elapsed < Self::DEBOUNCE
+            }
+            None => false,
+        }
+    }
+
+    fn remember(&mut self, event: Event) {
+        let new_inner = NotifyHandlerInner::from(event);
+        self.inner = Some(new_inner);
+    }
+}
+
+impl notify::EventHandler for NotifyHandler {
+    fn handle_event(&mut self, event_result: Result<Event, notify::Error>) {
+        match event_result {
+            Ok(event) => {
+                trace!(?event, "Notify event");
+                if NotifyHandler::relevant(&event) {
+                    if !self.debouncing(&event) {
+                        // Event must be cloned here so it can be remembered
+                        // later
+                        match self.channel.blocking_send(event.clone()) {
+                            Ok(()) => info!("Event forwarded"),
+                            Err(why) => {
+                                error!(?event, "Failed to send event: {why}")
+                            }
+                        }
+                    } else {
+                        trace!("Debounced event");
+                    }
+                    self.remember(event);
+                } else {
+                    trace!("Ignored event");
+                }
+            }
+            Err(why) => warn!("Watcher event error: {why}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NotifyHandlerInner {
+    prev_time: Instant,
+    prev_event: Event,
+}
+
+impl From<Event> for NotifyHandlerInner {
+    fn from(event: Event) -> Self {
+        NotifyHandlerInner {
+            prev_time: Instant::now(),
+            prev_event: event,
         }
     }
 }
