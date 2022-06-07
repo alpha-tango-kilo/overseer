@@ -36,4 +36,6 @@ pub(crate) enum CommandRunErrorType {
     Io(#[from] std::io::Error),
     #[error("command completed with non-zero status {0}")]
     ExitStatus(i32),
+    #[error(transparent)]
+    Ssh(#[from] openssh::Error),
 }

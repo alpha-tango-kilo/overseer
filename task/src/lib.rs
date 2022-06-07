@@ -22,13 +22,12 @@
 #![warn(missing_docs)]
 
 use async_trait::async_trait;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use is_executable::IsExecutable;
+use openssh::{KnownHosts, Session};
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
-use std::net::IpAddr;
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{error, info, trace, warn};
@@ -90,19 +89,19 @@ struct TaskCommand {
     name: String,
     #[serde(default)]
     working_dir: Utf8PathBuf,
-    #[serde(default, deserialize_with = "de_env_vars")]
-    env_vars: Vec<(String, String)>,
+    #[serde(default)]
+    env_vars: Vec<EnvVar>,
     #[serde(rename = "run")]
     inner: MyCommand,
 }
 
 impl TaskCommand {
-    async fn run(self: Arc<Self>) -> Result<(), CommandRunError> {
+    async fn run_local(self: Arc<Self>) -> Result<(), CommandRunError> {
         info!(%self.name, "TaskCommand triggered");
-        let mut command = self.inner.build();
+        let mut command = self.inner.build_local();
         command
             .current_dir(&self.working_dir)
-            .envs(self.env_vars.clone());
+            .envs(self.env_vars.iter().map(|EnvVar(k, v)| (k, v)));
         // This is ugly but without making an async closure I can't use
         // and_then
         let exit = match command.spawn() {
@@ -138,32 +137,118 @@ impl TaskCommand {
             }
         }
     }
+
+    async fn run_remote(
+        self: Arc<Self>,
+        destination: impl AsRef<str>,
+    ) -> Result<(), CommandRunError> {
+        let wd_opt = self.working_dir_opt();
+        if wd_opt.is_some() && !self.working_dir.is_absolute() {
+            warn!(%self.name, ?self.working_dir, "Working directory for remote command is not absolute");
+        }
+        let session = Session::connect(destination, KnownHosts::Strict)
+            .await
+            .map_err(|ssh_err| CommandRunError {
+            name: self.name.clone(),
+            r#type: ssh_err.into(),
+        })?;
+
+        /*
+        Making the openssh::Command - a short story
+        The problem is that unlike regular Command, we can't specify working
+        directory and environment variables easily. Session::shell bundles
+        the invocation into sh -c for us, which is nice, but we have to declare
+        all environment variables manually, and cd into the working directory.
+        This leads to a lot of hassle
+         */
+        let mut command = {
+            let mut invocation = String::new();
+            // Add export command for environment variables, if any
+            if !self.env_vars.is_empty() {
+                invocation.push_str("export ");
+                self.env_vars
+                    .iter()
+                    .map(ToString::to_string)
+                    .for_each(|env| {
+                        invocation.push(' ');
+                        invocation.push_str(&env);
+                    });
+                invocation.push_str(" && ");
+            }
+            // cd into custom working directory, if specified
+            if let Some(dir) = wd_opt {
+                invocation.push_str("cd ");
+                invocation.push_str(dir.as_str());
+                invocation.push_str(" && ");
+            }
+            // add the command with its arguments
+            invocation.push_str(&self.inner.program);
+            self.inner.args.iter().for_each(|arg| {
+                invocation.push(' ');
+                invocation.push_str(arg);
+            });
+            trace!(%invocation, "Built remote command");
+            session.shell(invocation)
+        };
+
+        // Could collect output with output()
+        let exit =
+            command.status().await.map_err(|ssh_err| CommandRunError {
+                name: self.name.clone(),
+                r#type: ssh_err.into(),
+            })?;
+        match exit.success() {
+            true => {
+                info!(%self.name, "TaskCommand completed successfully");
+                Ok(())
+            }
+            false => {
+                let exit_code = exit.code().expect("No exit code");
+                error!(%self.name, "TaskCommand failed with exit code {exit_code}");
+                Err(CommandRunError {
+                    name: self.name.clone(),
+                    r#type: CommandRunErrorType::ExitStatus(exit_code),
+                })
+            }
+        }
+    }
+
+    fn working_dir_opt(&self) -> Option<&Utf8Path> {
+        if self.working_dir != Utf8PathBuf::default() {
+            Some(self.working_dir.as_path())
+        } else {
+            None
+        }
+    }
 }
 
-fn de_env_vars<'de, D: Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<(String, String)>, D::Error> {
-    let input = Vec::<String>::deserialize(d)?;
-    let mut output = Vec::with_capacity(input.len());
-    for line in input.into_iter() {
-        match line.split_once('=') {
+#[derive(Debug, Clone)]
+struct EnvVar(String, String);
+
+impl ToString for EnvVar {
+    fn to_string(&self) -> String {
+        format!("{}={}", self.0, self.1)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnvVar {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        match s.split_once('=') {
             Some((key, val)) => {
                 if key.chars().any(|c| c.is_ascii_lowercase()) {
                     warn!(%key, "Lowercase environment variable");
                 }
-                output.push((
+                Ok(EnvVar(
                     key.trim_end().to_owned(),
                     val.trim_start().to_owned(),
-                ));
-            }
-            None => {
-                return Err(D::Error::custom(
-                    "incorrect environment variable syntax: no = in line",
                 ))
             }
+            None => Err(D::Error::custom(
+                "incorrect environment variable syntax: no = in line",
+            )),
         }
     }
-    Ok(output)
 }
 
 #[derive(Debug)]
@@ -173,7 +258,7 @@ struct MyCommand {
 }
 
 impl MyCommand {
-    fn build(&self) -> Command {
+    fn build_local(&self) -> Command {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
         cmd
@@ -212,10 +297,10 @@ impl<'de> Deserialize<'de> for MyCommand {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum Host {
     Local,
-    Remote(IpAddr),
+    Remote(String),
 }
 
 impl Default for Host {
@@ -232,10 +317,7 @@ impl<'de> Deserialize<'de> for Host {
         let s = String::deserialize(deserializer)?.to_ascii_lowercase();
         match s.as_str() {
             "local" | "localhost" | "127.0.0.1" | "::1" => Ok(Local),
-            s => {
-                let addr = IpAddr::from_str(s).map_err(D::Error::custom)?;
-                Ok(Remote(addr))
-            }
+            _ => Ok(Remote(s)),
         }
     }
 }

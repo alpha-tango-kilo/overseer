@@ -90,12 +90,12 @@ impl Task for CronTask {
 
     async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>> {
         info!(?self.id, %self.name, "Task triggered");
-        // TODO: handle remote hosts
-        let handle_iter = self
-            .commands
-            .iter()
-            .cloned()
-            .map(|cmd| tokio::spawn(cmd.run()));
+        let handle_iter = self.commands.iter().cloned().map(|cmd| match &self
+            .host
+        {
+            Host::Local => tokio::spawn(cmd.run_local()),
+            Host::Remote(addr) => tokio::spawn(cmd.run_remote(addr.clone())),
+        });
 
         let results = future::join_all(handle_iter).await;
         trace!(?self.id, %self.name, "Processing task command results");
