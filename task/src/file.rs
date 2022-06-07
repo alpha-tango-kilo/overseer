@@ -2,10 +2,11 @@ use crate::{
     CommandRunError, CommandRunErrorType, Commands, Host, ReadError, Task,
 };
 use async_trait::async_trait;
+use camino::Utf8PathBuf;
 use futures::future;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -25,7 +26,7 @@ pub struct FileEventTask {
     #[serde(default)]
     dependencies: Vec<()>, // TODO: populate with services
     #[serde(rename = "paths")]
-    watch_paths: Vec<PathBuf>,
+    watch_paths: Vec<Utf8PathBuf>,
     #[allow(dead_code)]
     #[serde(default)]
     host: Host,
@@ -61,8 +62,10 @@ impl FileEventTask {
         self.watch_paths.iter().for_each(|path| {
             // TODO: expose RecursiveMode to config files
             // https://docs.rs/notify/latest/5.0.0-pre.15/enum.RecursiveMode.html
-            if let Err(why) = watcher.watch(path, RecursiveMode::NonRecursive) {
-                error!("Couldn't watch {}: {}", path.to_string_lossy(), why);
+            if let Err(why) =
+                watcher.watch(path.as_std_path(), RecursiveMode::NonRecursive)
+            {
+                error!("Couldn't watch {path}: {why}");
             }
         });
         info!(%self.name, "Created watcher");

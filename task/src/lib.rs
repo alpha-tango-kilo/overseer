@@ -22,11 +22,12 @@
 #![warn(missing_docs)]
 
 use async_trait::async_trait;
+use camino::Utf8PathBuf;
 use is_executable::IsExecutable;
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -88,7 +89,7 @@ where
 struct TaskCommand {
     name: String,
     #[serde(default)]
-    working_dir: PathBuf,
+    working_dir: Utf8PathBuf,
     #[serde(default, deserialize_with = "de_env_vars")]
     env_vars: Vec<(String, String)>,
     #[serde(rename = "run")]
