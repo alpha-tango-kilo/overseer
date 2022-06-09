@@ -160,23 +160,22 @@ impl notify::EventHandler for PreEventHandler {
     fn handle_event(&mut self, event_result: Result<Event, notify::Error>) {
         match event_result {
             Ok(event) => {
-                trace!(?event, "Notify event");
                 if PreEventHandler::relevant(&event) {
                     if !self.debouncing(&event) {
                         // Event must be cloned here so it can be remembered
                         // later
                         match self.channel.blocking_send(event.clone()) {
-                            Ok(()) => info!("Event forwarded"),
+                            Ok(()) => info!(?event, "Event forwarded"),
                             Err(why) => {
                                 error!(?event, "Failed to send event: {why}")
                             }
                         }
                     } else {
-                        trace!("Debounced event");
+                        trace!(?event, "Debounced event");
                     }
                     self.remember(event);
                 } else {
-                    trace!("Ignored event");
+                    trace!(?event, "Ignored event");
                 }
             }
             Err(why) => warn!("Watcher event error: {why}"),
@@ -209,14 +208,11 @@ impl<W: Watcher> PostEventHandler<W> {
     async fn monitor(mut self) {
         loop {
             match self.rx.recv().await {
-                Some(_) => match self.parent.clone().run().await {
-                    Ok(()) => {
-                        info!(%self.parent.name, "Task completed successfully")
-                    }
-                    Err(why) => {
+                Some(_) => {
+                    if let Err(why) = self.parent.clone().run().await {
                         why.into_iter().for_each(|err| error!("{err}"));
                     }
-                },
+                }
                 None => {
                     info!("EventHandler shutdown on receiving None");
                     return;
