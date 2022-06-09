@@ -135,8 +135,9 @@ impl PreEventHandler {
     }
 
     fn relevant(event: &Event) -> bool {
+        use notify::event::ModifyKind::*;
         use notify::EventKind::*;
-        matches!(event.kind, Create(_) | Modify(_) | Remove(_))
+        matches!(event.kind, Create(_) | Modify(Data(_)) | Remove(_))
     }
 
     fn debouncing(&self, event: &Event) -> bool {
