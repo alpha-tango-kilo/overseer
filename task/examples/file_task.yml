@@ -1,6 +1,6 @@
 name: Everything is a file
 host: local
-paths:
+triggers:
   - demo_script.sh
 commands:
   - name: Confirm it works

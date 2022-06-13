@@ -25,7 +25,7 @@ pub struct FileEventTask {
     #[allow(dead_code)]
     #[serde(default)]
     dependencies: Vec<()>, // TODO: populate with services
-    #[serde(rename = "paths")]
+    #[serde(rename = "triggers")]
     watch_paths: Vec<Utf8PathBuf>,
     #[allow(dead_code)]
     #[serde(default)]
