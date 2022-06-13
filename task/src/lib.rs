@@ -23,7 +23,6 @@
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
-use is_executable::IsExecutable;
 use openssh::{KnownHosts, Session};
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
@@ -98,8 +97,9 @@ struct TaskCommand {
 impl TaskCommand {
     async fn run_local(self: Arc<Self>) -> Result<(), CommandRunError> {
         info!(%self.name, "TaskCommand triggered");
-        let mut command = self.inner.build_local();
+        let mut command = Command::new(&self.inner.program);
         command
+            .args(&self.inner.args)
             .current_dir(&self.working_dir)
             .envs(self.env_vars.iter().map(|EnvVar(k, v)| (k, v)));
         // This is ugly but without making an async closure I can't use
@@ -257,41 +257,23 @@ struct MyCommand {
     args: Vec<String>,
 }
 
-impl MyCommand {
-    fn build_local(&self) -> Command {
-        let mut cmd = Command::new(&self.program);
-        cmd.args(&self.args);
-        cmd
-    }
-}
-
 impl<'de> Deserialize<'de> for MyCommand {
     fn deserialize<D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Self, D::Error> {
         let input = String::deserialize(deserializer)?;
-        let path = Path::new(&input);
-        let command = if path.exists() && path.is_executable() {
-            trace!("Assuming {input:?} is a path");
-            let command = match input.split_once(' ') {
-                Some((program, args)) => MyCommand {
-                    program: program.to_owned(),
-                    args: args.split(' ').map(ToOwned::to_owned).collect(),
-                },
-                None => MyCommand {
-                    program: input,
-                    args: vec![],
-                },
-            };
-            command
-        } else {
-            trace!("Assuming {input:?} is a bash invocation");
-            MyCommand {
-                // Consider making this less platform specific
-                // (will someone PLEASE think of the Windows users?!)
-                program: String::from("sh"),
-                args: vec![String::from("-c"), format!("{input:?}")],
-            }
+        let command = match input.split_once(' ') {
+            Some((program, args)) => MyCommand {
+                program: program.to_owned(),
+                args: args
+                    .split_whitespace()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            },
+            None => MyCommand {
+                program: input,
+                args: Vec::new(),
+            },
         };
         Ok(command)
     }
