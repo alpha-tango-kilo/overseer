@@ -265,10 +265,7 @@ impl<'de> Deserialize<'de> for MyCommand {
         let command = match input.split_once(' ') {
             Some((program, args)) => MyCommand {
                 program: program.to_owned(),
-                args: args
-                    .split_whitespace()
-                    .map(ToOwned::to_owned)
-                    .collect(),
+                args: args.split_whitespace().map(ToOwned::to_owned).collect(),
             },
             None => MyCommand {
                 program: input,
