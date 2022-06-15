@@ -7,7 +7,6 @@ use bollard::errors::Error as BollardError;
 use bollard::{Docker, API_DEFAULT_VERSION};
 use camino::Utf8PathBuf;
 use docker_compose_types::Compose;
-use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -57,12 +56,36 @@ impl DockerCompose {
                 r#type: DockerComposeInitErrorType::MissingFields,
             })?
             .0;
-        trace!(?services, "This is the services IndexMap");
+        trace!(%self.name, ?services, "This is the services IndexMap");
         let names = services.keys().cloned().collect::<Vec<String>>();
 
         // Set & return
         self.inner = Some(DockerComposeInner { names, conn });
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Service for DockerCompose {
+    async fn status(self: &Arc<Self>) -> Result<ServiceStatus, ServiceError> {
+        use ServiceStatus::*;
+        let DockerComposeInner { names, conn } =
+            self.inner.as_ref().ok_or(ServiceError::NotConnected)?;
+        let mut current = Healthy;
+        /*
+        Go over statuses of each service. If any error, fail fast. If any are
+        offline, return Ok(Offline) fast. Otherwise, return the lowest value
+        (i.e. unhealthy if seen but healthy otherwise)
+         */
+        for fut in names.iter().map(|name| docker_status(conn, name)) {
+            match fut.await {
+                Ok(Offline) => return Ok(Offline),
+                Ok(this) if current > this => current = this,
+                Err(why) => return Err(why),
+                _ => {}
+            }
+        }
+        Ok(current)
     }
 }
 
@@ -89,35 +112,9 @@ impl DockerContainer {
 
 #[async_trait]
 impl Service for DockerContainer {
-    async fn status(self: &Arc<Self>) -> Result<ServiceStatus> {
-        use ServiceError::{Conflicting, MissingInfo, NotConnected};
-        let state = self
-            .conn
-            .as_ref()
-            .ok_or(NotConnected)?
-            .inspect_container(&self.name, None)
-            .await?
-            .state
-            .ok_or(MissingInfo("container state"))?;
-        // Use extra code block to wildcard import enums
-        let health = state
-            .health
-            .and_then(|h| h.status)
-            .and_then(ServiceStatus::from_health);
-        let status = state.status.and_then(ServiceStatus::from_status);
-
-        use ServiceStatus::*;
-        match (status, health) {
-            (Some(Healthy), Some(Healthy)) => Ok(Healthy),
-            (Some(Healthy), None) => Ok(Healthy),
-            (Some(Unhealthy), Some(Healthy)) => Ok(Healthy),
-            (Some(Unhealthy), Some(Unhealthy) | None) => Ok(Unhealthy),
-            (Some(Offline), Some(Unhealthy) | None) => Ok(Offline),
-            (None, Some(s)) => Ok(s),
-            (None, None) => Err(MissingInfo("health or status")),
-            // Clean up
-            (Some(a), Some(b)) => Err(Conflicting(a, b)),
-        }
+    async fn status(self: &Arc<Self>) -> Result<ServiceStatus, ServiceError> {
+        let conn = self.conn.as_ref().ok_or(ServiceError::NotConnected)?;
+        docker_status(conn, &self.name).await
     }
 }
 
@@ -139,4 +136,35 @@ async fn docker_connect(host: &str) -> Result<Docker, BollardError> {
     let conn = conn.negotiate_version().await?;
     conn.ping().await?;
     Ok(conn)
+}
+
+async fn docker_status(
+    conn: &Docker,
+    name: &str,
+) -> Result<ServiceStatus, ServiceError> {
+    use ServiceError::{Conflicting, MissingInfo};
+    let state = conn
+        .inspect_container(name, None)
+        .await?
+        .state
+        .ok_or(MissingInfo("container state"))?;
+    // Use extra code block to wildcard import enums
+    let health = state
+        .health
+        .and_then(|h| h.status)
+        .and_then(ServiceStatus::from_health);
+    let status = state.status.and_then(ServiceStatus::from_status);
+
+    use ServiceStatus::*;
+    match (status, health) {
+        (Some(Healthy), Some(Healthy)) => Ok(Healthy),
+        (Some(Healthy), None) => Ok(Healthy),
+        (Some(Unhealthy), Some(Healthy)) => Ok(Healthy),
+        (Some(Unhealthy), Some(Unhealthy) | None) => Ok(Unhealthy),
+        (Some(Offline), Some(Unhealthy) | None) => Ok(Offline),
+        (None, Some(s)) => Ok(s),
+        (None, None) => Err(MissingInfo("health or status")),
+        // Clean up
+        (Some(a), Some(b)) => Err(Conflicting(a, b)),
+    }
 }

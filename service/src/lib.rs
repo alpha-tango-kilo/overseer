@@ -16,7 +16,7 @@ pub trait Service {
     //async fn stop(self: Arc<Self>);
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ServiceStatus {
     Healthy,
     Unhealthy,
