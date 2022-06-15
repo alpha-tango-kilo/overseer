@@ -10,7 +10,7 @@ pub type Result<T, E = ServiceError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
-    #[error("not connected to Docker API")]
+    #[error("not connected to the Docker API")]
     NotConnected,
     #[error(transparent)]
     Docker(#[from] bollard::errors::Error),

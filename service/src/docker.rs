@@ -31,6 +31,7 @@ impl DockerContainer {
                 )
             }
         }?;
+        let conn = conn.negotiate_version().await?;
         conn.ping().await?;
         self.conn = Some(conn);
         Ok(())
