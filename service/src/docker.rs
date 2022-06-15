@@ -1,12 +1,40 @@
 use crate::{Result, Service, ServiceError, ServiceStatus};
 use async_trait::async_trait;
-use bollard::Docker;
+use bollard::errors::Error as BollardError;
+use bollard::{Docker, API_DEFAULT_VERSION};
 use serde::Deserialize;
+use std::path::Path;
 use std::sync::Arc;
+use tracing::error;
 
 #[derive(Debug, Deserialize)]
 pub struct DockerContainer {
     name: String,
+    host: String,
+    #[serde(skip)]
+    conn: Option<Docker>,
+}
+
+impl DockerContainer {
+    pub async fn connect(&mut self) -> Result<(), BollardError> {
+        let conn = match self.host.as_str() {
+            "localhost" => Docker::connect_with_local_defaults(),
+            _ => {
+                error!(%self.host, "connecting to a remote Docker instance over SSL is not implemented and will always fail");
+                Docker::connect_with_ssl(
+                    &self.host,
+                    Path::new(""),
+                    Path::new(""),
+                    Path::new(""),
+                    120, // default for bollard (2 mins)
+                    API_DEFAULT_VERSION,
+                )
+            }
+        }?;
+        conn.ping().await?;
+        self.conn = Some(conn);
+        Ok(())
+    }
 }
 
 #[async_trait]
