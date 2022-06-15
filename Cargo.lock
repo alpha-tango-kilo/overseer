@@ -1113,6 +1113,8 @@ name = "overseer_test"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "serde_yaml",
+ "service",
  "task",
  "tokio",
  "tracing",
