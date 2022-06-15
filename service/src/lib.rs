@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use bollard::models::{ContainerStateStatusEnum, HealthStatusEnum};
-use bollard::Docker;
 use std::fmt;
 use std::sync::Arc;
 use thiserror::Error;
@@ -11,6 +10,8 @@ pub type Result<T, E = ServiceError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
+    #[error("not connected to Docker API")]
+    NotConnected,
     #[error(transparent)]
     Docker(#[from] bollard::errors::Error),
     #[error("Docker API response didn't provide {0}")]
@@ -23,10 +24,7 @@ pub enum ServiceError {
 
 #[async_trait]
 pub trait Service {
-    async fn status(
-        self: Arc<Self>,
-        conn: Arc<Docker>,
-    ) -> Result<ServiceStatus>;
+    async fn status(self: &Arc<Self>) -> Result<ServiceStatus>;
     //async fn start(self: Arc<Self>);
     //async fn stop(self: Arc<Self>);
 }

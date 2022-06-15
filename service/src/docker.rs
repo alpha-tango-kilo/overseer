@@ -41,12 +41,12 @@ impl DockerContainer {
 impl Service for DockerContainer {
     // TL;DR use docker API info and co-erce to bool, which we then convert to
     // ServiceStatus
-    async fn status(
-        self: Arc<Self>,
-        conn: Arc<Docker>,
-    ) -> Result<ServiceStatus> {
-        use ServiceError::{Conflicting, MissingInfo};
-        let state = conn
+    async fn status(self: &Arc<Self>) -> Result<ServiceStatus> {
+        use ServiceError::{Conflicting, MissingInfo, NotConnected};
+        let state = self
+            .conn
+            .as_ref()
+            .ok_or(NotConnected)?
             .inspect_container(&self.name, None)
             .await?
             .state
