@@ -1,26 +1,13 @@
+use crate::error::ServiceError;
 use async_trait::async_trait;
 use bollard::models::{ContainerStateStatusEnum, HealthStatusEnum};
 use std::fmt;
 use std::sync::Arc;
-use thiserror::Error;
 
 pub mod docker;
+pub mod error;
 
-pub type Result<T, E = ServiceError> = std::result::Result<T, E>;
-
-#[derive(Debug, Error)]
-pub enum ServiceError {
-    #[error("not connected to the Docker API")]
-    NotConnected,
-    #[error(transparent)]
-    Docker(#[from] bollard::errors::Error),
-    #[error("Docker API response didn't provide {0}")]
-    MissingInfo(&'static str),
-    #[error(
-        "Docker API gave conflicting information, status: {0}, health: {1}"
-    )]
-    Conflicting(ServiceStatus, ServiceStatus),
-}
+type Result<T, E = ServiceError> = std::result::Result<T, E>;
 
 #[async_trait]
 pub trait Service {
