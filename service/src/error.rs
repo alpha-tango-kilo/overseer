@@ -1,5 +1,6 @@
+use crate::docker::DockerCompose;
 use crate::ServiceStatus;
-use camino::Utf8PathBuf;
+use std::ffi::OsString;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -17,9 +18,9 @@ pub enum ServiceError {
 }
 
 #[derive(Debug, Error)]
-#[error("failed to initialise {path}: {r#type}")]
+#[error("failed to initialise {target}: {r#type}")]
 pub struct DockerComposeInitError {
-    pub(crate) path: Utf8PathBuf,
+    pub(crate) target: DockerCompose,
     pub(crate) r#type: DockerComposeInitErrorType,
 }
 
@@ -33,4 +34,8 @@ pub(crate) enum DockerComposeInitErrorType {
     MissingFields,
     #[error(transparent)]
     Bollard(#[from] bollard::errors::Error),
+    #[error("remote communication error: {0}")]
+    OpenSsh(#[from] openssh::Error),
+    #[error("remote cat failed: {}", .0.to_string_lossy())]
+    RemoteCmd(OsString),
 }

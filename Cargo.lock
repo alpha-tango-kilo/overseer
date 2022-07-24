@@ -1564,6 +1564,7 @@ dependencies = [
  "camino",
  "docker-compose-types",
  "indexmap",
+ "openssh",
  "serde",
  "serde_yaml",
  "thiserror",

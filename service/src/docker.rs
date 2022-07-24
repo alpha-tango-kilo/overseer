@@ -7,7 +7,11 @@ use bollard::errors::Error as BollardError;
 use bollard::{Docker, API_DEFAULT_VERSION};
 use camino::Utf8PathBuf;
 use docker_compose_types::Compose;
+use openssh::{KnownHosts, Session};
 use serde::Deserialize;
+use std::ffi::OsString;
+use std::fmt;
+use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, trace};
@@ -26,25 +30,54 @@ impl DockerCompose {
         // Connect to host
         let conn = docker_connect(&self.host).await.map_err(|err| {
             DockerComposeInitError {
-                path: self.path.clone(),
+                target: self.clone(),
                 r#type: err.into(),
             }
         })?;
 
         // Get service names out of docker-compose.yml
         let bytes = match self.host.as_str() {
-            "localhost" => tokio::fs::read(&self.path).await.map_err(|err| {
-                DockerComposeInitError {
-                    path: self.path.clone(),
-                    r#type: err.into(),
+            "localhost" => {
+                tokio::fs::read(&self.path).await.map_err(|err| {
+                    DockerComposeInitError {
+                        target: self.clone(),
+                        r#type: err.into(),
+                    }
+                })?
+            }
+            _ => {
+                trace!(
+                    "Setting up remote connection to read docker-compose.yml"
+                );
+                let session = Session::connect(&self.host, KnownHosts::Strict)
+                    .await
+                    .map_err(|err| DockerComposeInitError {
+                        target: self.clone(),
+                        r#type: err.into(),
+                    })?;
+                let output = session
+                    .shell(format!("cat {}", self.path))
+                    .output()
+                    .await
+                    .map_err(|err| DockerComposeInitError {
+                        target: self.clone(),
+                        r#type: err.into(),
+                    })?;
+                if !output.status.success() {
+                    let stderr = OsString::from_vec(output.stderr);
+                    return Err(DockerComposeInitError {
+                        target: self.clone(),
+                        r#type: DockerComposeInitErrorType::RemoteCmd(stderr),
+                    });
+                } else {
+                    output.stdout
                 }
-            }),
-            _ => todo!("Remotely read docker-compose.yml"),
-        }?;
+            }
+        };
         let compose =
             serde_yaml::from_slice::<Compose>(&bytes).map_err(|err| {
                 DockerComposeInitError {
-                    path: self.path.clone(),
+                    target: self.clone(),
                     r#type: err.into(),
                 }
             })?;
@@ -52,7 +85,7 @@ impl DockerCompose {
         let services = compose
             .services
             .ok_or_else(|| DockerComposeInitError {
-                path: self.path.clone(),
+                target: self.clone(),
                 r#type: DockerComposeInitErrorType::MissingFields,
             })?
             .0;
@@ -86,6 +119,28 @@ impl Service for DockerCompose {
             }
         }
         Ok(current)
+    }
+}
+
+impl fmt::Display for DockerCompose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({}", self.name, self.path)?;
+        if !self.host.eq_ignore_ascii_case("localhost") {
+            write!(f, " on {})", self.host)
+        } else {
+            write!(f, ")")
+        }
+    }
+}
+
+impl Clone for DockerCompose {
+    fn clone(&self) -> Self {
+        DockerCompose {
+            name: self.name.clone(),
+            host: self.host.clone(),
+            path: self.path.clone(),
+            inner: None,
+        }
     }
 }
 
