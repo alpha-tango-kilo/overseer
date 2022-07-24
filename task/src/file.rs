@@ -2,11 +2,10 @@ use crate::{
     CommandRunError, CommandRunErrorType, Commands, Host, ReadError, Task,
 };
 use async_trait::async_trait;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use futures::future;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -38,7 +37,7 @@ impl FileEventTask {
     #[inline(always)]
     pub async fn load_from<P>(path: P) -> Result<Self, ReadError>
     where
-        P: AsRef<Path> + Send + Sync,
+        P: AsRef<Utf8Path> + Send + Sync,
     {
         crate::load_from(path).await
     }

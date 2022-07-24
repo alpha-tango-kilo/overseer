@@ -26,7 +26,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use openssh::{KnownHosts, Session};
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
-use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{error, info, trace, warn};
@@ -62,7 +61,7 @@ pub trait Task {
     async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>>;
 }
 
-pub(crate) async fn load_from<T>(path: impl AsRef<Path>) -> Result<T, ReadError>
+pub(crate) async fn load_from<T>(path: impl AsRef<Utf8Path>) -> Result<T, ReadError>
 where
     T: Task + DeserializeOwned,
 {

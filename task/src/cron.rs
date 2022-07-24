@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use delay_timer::prelude::*;
 use futures::future;
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use camino::Utf8Path;
 use tracing::{info, trace, warn};
 
 use crate::{
@@ -45,7 +45,7 @@ impl CronTask {
     #[inline(always)]
     pub async fn load_from<P>(path: P) -> Result<Self, ReadError>
     where
-        P: AsRef<Path> + Send + Sync,
+        P: AsRef<Utf8Path> + Send + Sync,
     {
         crate::load_from(path).await
     }

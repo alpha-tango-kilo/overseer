@@ -1,13 +1,13 @@
-use std::path::PathBuf;
+use camino::Utf8PathBuf;
 use thiserror::Error;
 
 /// Errors that occur while reading or parsing a task YAML file
 ///
 /// See [`CronTask::load_from`](crate::CronTask::load_from) for guidance on correct formatting
 #[derive(Debug, Error)]
-#[error("failed to read {}: {r#type}", .path.to_string_lossy())]
+#[error("failed to read {}: {r#type}", .path)]
 pub struct ReadError {
-    pub(crate) path: PathBuf,
+    pub(crate) path: Utf8PathBuf,
     pub(crate) r#type: ReadErrorType,
 }
 
