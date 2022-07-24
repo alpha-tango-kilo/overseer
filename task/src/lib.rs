@@ -61,7 +61,9 @@ pub trait Task {
     async fn run(self: Arc<Self>) -> Result<(), Vec<CommandRunError>>;
 }
 
-pub(crate) async fn load_from<T>(path: impl AsRef<Utf8Path>) -> Result<T, ReadError>
+pub(crate) async fn load_from<T>(
+    path: impl AsRef<Utf8Path>,
+) -> Result<T, ReadError>
 where
     T: Task + DeserializeOwned,
 {
